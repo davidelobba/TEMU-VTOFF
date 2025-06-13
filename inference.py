@@ -142,7 +142,8 @@ def main(args):
 
     image = Image.open(image_path)
     image = image.resize((args.width, args.height))
-
+    image = transforms.ToTensor()(image).unsqueeze(0)
+    
     caption = open(os.path.join(image_directory, f"{image_name}_caption.txt"), "r").read()
 
     image_fine_mask = Image.open(os.path.join(image_directory, f"{image_name}_fine_mask.jpg"))
