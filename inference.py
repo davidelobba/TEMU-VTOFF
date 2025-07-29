@@ -1,6 +1,8 @@
 import argparse
 import torch
+import logging
 import os
+import time
 from diffusers import (
     AutoencoderKL,
     FlowMatchEulerDiscreteScheduler,
@@ -13,24 +15,35 @@ from transformers import CLIPVisionModelWithProjection
 from PIL import Image
 from torchvision import transforms
 
+
 def load_text_encoders(class_one, class_two, class_three):
     text_encoder_one, text_encoder_two, text_encoder_three = None, None, None
     if class_one is not None and class_two is not None:
         text_encoder_one = class_one.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant,
+            args.pretrained_model_name_or_path,
+            subfolder="text_encoder",
+            revision=args.revision,
+            variant=args.variant,
         )
         text_encoder_two = class_two.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder_2", revision=args.revision, variant=args.variant,
+            args.pretrained_model_name_or_path,
+            subfolder="text_encoder_2",
+            revision=args.revision,
+            variant=args.variant,
         )
         text_encoder_one.requires_grad_(False)
         text_encoder_two.requires_grad_(False)
-        
+
     if class_three is not None:
         text_encoder_three = class_three.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder_3", revision=args.revision, variant=args.variant,
+            args.pretrained_model_name_or_path,
+            subfolder="text_encoder_3",
+            revision=args.revision,
+            variant=args.variant,
         )
         text_encoder_three.requires_grad_(False)
     return text_encoder_one, text_encoder_two, text_encoder_three
+
 
 def import_model_class_from_model_name_or_path(
     pretrained_model_name_or_path: str, revision: str, subfolder: str = "text_encoder"
@@ -66,7 +79,11 @@ def main(args):
         weight_dtype = torch.float16
     elif args.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-        
+
+    # Load model, processor
+
+    model_load_time = time.time()
+
     tokenizer_one = CLIPTokenizer.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="tokenizer",
@@ -84,24 +101,24 @@ def main(args):
         low_cpu_mem_usage=True,
     )
 
-    text_encoder_cls_one = import_model_class_from_model_name_or_path(
-            args.pretrained_model_name_or_path, args.revision
-        )
+    text_encoder_cls_one = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
     text_encoder_cls_two = import_model_class_from_model_name_or_path(
         args.pretrained_model_name_or_path, args.revision, subfolder="text_encoder_2"
     )
     text_encoder_cls_three = import_model_class_from_model_name_or_path(
         args.pretrained_model_name_or_path, args.revision, subfolder="text_encoder_3"
-    )   
-    
-    text_encoder_one, text_encoder_two, text_encoder_three = load_text_encoders(
-        text_encoder_cls_one, text_encoder_cls_two, text_encoder_cls_three,
     )
-    
+
+    text_encoder_one, text_encoder_two, text_encoder_three = load_text_encoders(
+        text_encoder_cls_one,
+        text_encoder_cls_two,
+        text_encoder_cls_three,
+    )
+
     noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="scheduler"
     )
-    
+
     vae = AutoencoderKL.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="vae",
@@ -109,15 +126,25 @@ def main(args):
         variant=args.variant,
     )
     transformer = SD3Transformer2DModel.from_pretrained(
-        args.pretrained_model_name_or_path_sd3_tryoff, subfolder="transformer", revision=args.revision, variant=args.variant
+        args.pretrained_model_name_or_path_sd3_tryoff,
+        subfolder="transformer",
+        revision=args.revision,
+        variant=args.variant,
     )
 
     transformer_vton_feature_extractor = SD3Transformer2DModel_feature_extractor.from_pretrained(
-        args.pretrained_model_name_or_path_sd3_tryoff, subfolder="transformer_vton", revision=args.revision, variant=args.variant
+        args.pretrained_model_name_or_path_sd3_tryoff,
+        subfolder="transformer_vton",
+        revision=args.revision,
+        variant=args.variant,
     )
 
-    image_encoder_large = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14").to(device=device, dtype=weight_dtype)
-    image_encoder_bigG = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k").to(device=device, dtype=weight_dtype)
+    image_encoder_large = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14").to(
+        device=device, dtype=weight_dtype
+    )
+    image_encoder_bigG = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k").to(
+        device=device, dtype=weight_dtype
+    )
 
     pipeline = StableDiffusion3TryOffPipelineMasked(
         scheduler=noise_scheduler,
@@ -135,6 +162,10 @@ def main(args):
     )
 
     pipeline.to(device, dtype=weight_dtype)
+    print(f"Model load time: {time.time() - model_load_time:.4f}")
+
+    # load data
+    data_load_time = time.time()
 
     image_path = args.example_image
     image_name = os.path.splitext(os.path.basename(image_path))[0]
@@ -142,6 +173,7 @@ def main(args):
 
     image = Image.open(image_path)
     image = image.resize((args.width, args.height))
+    image = transforms.ToTensor()(image).unsqueeze(0)
 
     caption = open(os.path.join(image_directory, f"{image_name}_caption.txt"), "r").read()
 
@@ -150,9 +182,12 @@ def main(args):
 
     image_binary_mask = Image.open(os.path.join(image_directory, f"{image_name}_binary_mask.jpg"))
     image_binary_mask = image_binary_mask.resize((args.width, args.height))
-        
+
     generator = torch.Generator(device=device).manual_seed(args.seed) if args.seed else None
-        
+    print(f"Data load time: {time.time() - data_load_time:.4f}")
+
+    # Inferecen Time
+    total_inference_time = time.time()
     image = pipeline(
         prompt=caption,
         height=args.height,
@@ -164,7 +199,8 @@ def main(args):
         mask_input=image_binary_mask,
         image_input_masked=image_fine_mask,
     ).images[0]
-    
+    print(f"Total Inference Time: {time.time() - total_inference_time:.4f}")
+
     image.save(f"{args.output_dir}/{image_name}_output.png")
 
 
