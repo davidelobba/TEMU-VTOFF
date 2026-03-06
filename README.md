@@ -1,8 +1,9 @@
 <!-- PROJECT LOGO -->
 <br />
 <div align="center">
-   <h1 align="center">TEMU-VTOFF</h1>
-      <h3 align="center"> Text-Enhanced MUlti-category Virtual Try-Off</h3>
+  <h1 align="center" style="margin: 0 0 px 0;">TEMU-VTOFF</h1>
+  <h3 align="center" style="margin: 0;">Text-Enhanced MUlti-category Virtual Try-Off</h3>
+  <h3 align="center" style="margin: 6px 0 15px 0;">ICLR 2026</h3>
 </div>
 
 <div align="center">
@@ -23,10 +24,10 @@
 
 <div align="center">
   <a href="https://arxiv.org/abs/2505.21062" style="margin: 0 2px;">
-    <img src="https://img.shields.io/badge/Paper-Arxiv-darkred.svg" alt="Paper">
+    <img src="https://img.shields.io/badge/Paper-arXiv-darkred.svg" alt="Paper">
   </a>
   <a href="https://arxiv.org/pdf/2505.21062" style="margin: 0 2px;">
-    <img src="https://img.shields.io/badge/PDF-Arxiv-darkred.svg" alt="PDF">
+    <img src="https://img.shields.io/badge/PDF-arXiv-darkred.svg" alt="PDF">
   </a>
   <a href='https://temu-vtoff-page.github.io/' style="margin: 0 2px;">
     <img src='https://img.shields.io/badge/Webpage-Project-silver?style=flat&logo=&logoColor=orange' alt='webpage'>
@@ -135,7 +136,7 @@ Generate textual descriptions for each sample using a multimodal VLM (e.g., Qwen
 python precompute_utils/captioning_qwen.py \
             --pretrained_model_name_or_path "Qwen/Qwen2.5-VL-7B-Instruct" \
             --dataset_name "dresscode" \
-            --dataset_root "put here your dataset path" \
+            --dataset_root "path to your dataset" \
             --filename "qwen_captions_2_5.json"\
             --temperatures 0.2
 ```
@@ -146,15 +147,13 @@ Extract textual features using OpenCLIP, CLIP and T5 text encoders.
 ```sh
 phases=("test" "train")
 for phase in "${phases[@]}"; do
-   python precompute_utils/precompute_text_features.py \
+    python precompute_text_features.py \
                --pretrained_model_name_or_path "stabilityai/stable-diffusion-3-medium-diffusers" \
                --dataset_name "dresscode" \
-               --dataset_root "put here your dataset path" \
+               --dataset_root "path to your dataset" \
                --phase $phase \
                --order "paired" \
                --category "all" \
-               --output_dir "" \
-               --seed 42 \
                --height 1024 \
                --width 768 \
                --batch_size 4 \
@@ -162,6 +161,7 @@ for phase in "${phases[@]}"; do
                --num_workers 8 \
                --text_encoders "T5" "CLIP" \
                --captions_type "qwen_text_embeddings"
+done
 ```
 
 Extract visual features using OpenCLIP and CLIP vision encoders.
@@ -170,16 +170,16 @@ phases=("test" "train")
 for phase in "${phases[@]}"; do
    python precompute_utils/precompute_image_features.py \
                --dataset "dresscode" \
-               --dataroot "put here your dataset path" \
+               --dataroot "path to your dataset" \
                --phase $phase \
                --order "paired" \
                --category "all" \
-               --seed 42 \
                --height 1024 \
                --width 768 \
                --batch_size 4 \
                --mixed_precision "fp16" \
                --num_workers 8
+done
 ```
 ### Generate Images
 Let's generate the in-shop garment images of DressCode or VITON-HD using the TEMU-VTOFF model.
@@ -191,14 +191,14 @@ python inference_dataset.py \
     --pretrained_model_name_or_path "stabilityai/stable-diffusion-3-medium-diffusers" \
     --pretrained_model_name_or_path_sd3_tryoff "davidelobba/TEMU-VTOFF" \
     --dataset_name "dresscode" \
-    --dataset_root "put here your dataset path" \
-    --output_dir "put here the output path" \
+    --dataset_root "path to your dataset" \
+    --output_dir "path to your output folder" \
     --coarse_caption_file "qwen_captions_2_5_0_2.json" \
     --phase "test" \
     --order "paired" \
     --height "1024" \
     --width "768" \
-    --mask_type bounding_box \
+    --mask_type "bounding_box" \
     --category "all" \
     --batch_size 4 \
     --mixed_precision "bf16" \
@@ -208,6 +208,88 @@ python inference_dataset.py \
     --guidance_scale 2.0 \
     --num_inference_steps 28
 ```
+
+## Training
+### Feature Extractor training
+Let's train the feature extractor.
+```sh
+source venv/bin/activate
+source .env
+
+accelerate launch --config_file "path to your accelerate config" \
+  --num_processes=$NUM_PROCESSES \
+  --num_machines=$SLURM_NNODES \
+  --machine_rank=$SLURM_NODEID \
+  --main_process_ip=$MAIN_PROCESS_IP \
+  training_feature_extractor.py \
+      --pretrained_model_name_or_path "stabilityai/stable-diffusion-3-medium-diffusers" \
+      --dataset_name "dresscode" \
+      --dataset_root "path to your dataset" \
+      --phase "train" \
+      --order "paired" \
+      --category "all" \
+      --output_dir "path to your output folder" \
+      --seed 42 \
+      --height 1024 \
+      --width 768 \
+      --train_batch_size 8 \
+      --max_train_steps 30000  \
+      --checkpointing_steps 5000 \
+      --gradient_accumulation_steps 1 \
+      --learning_rate 1e-4 \
+      --lr_scheduler "cosine" \
+      --lr_warmup_steps 1500 \
+      --weighting_scheme "logit_normal" \
+      --optimizer "adamw" \
+      --report_to "wandb" \
+      --mixed_precision "bf16" \
+      --num_workers 8 \
+      --mask_type "bounding_box" \
+```
+
+### TEMU-VTOFF training
+Let's train the final model.
+```sh
+source venv/bin/activate
+source .env
+
+accelerate launch --config_file "path to your accelerate config" \
+  --num_processes=$NUM_PROCESSES \
+  --num_machines=$SLURM_NNODES \
+  --machine_rank=$SLURM_NODEID \
+  --main_process_ip=$MAIN_PROCESS_IP \
+  training_TEMU_VTOFF.py \
+      --pretrained_model_name_or_path "stabilityai/stable-diffusion-3-medium-diffusers" \
+      --pretrained_model_name_or_path_sd3 "path to pretrained feature extractor" \
+      --dataset_name "dresscode" \
+      --dataset_root "path to your dataset" \
+      --phase "train" \
+      --order "paired" \
+      --category "all" \
+      --coarse_caption_file "qwen_captions_2_5_0_2.json" \
+      --output_dir "path to your output folder" \
+      --seed 42 \
+      --height 1024 \
+      --width 768 \
+      --train_batch_size 8 \
+      --max_train_steps 30000 \
+      --checkpointing_steps 6000 \
+      --gradient_accumulation_steps 1 \
+      --learning_rate 1e-4 \
+      --lr_scheduler "cosine" \
+      --lr_warmup_steps 3000 \
+      --weighting_scheme "logit_normal" \
+      --optimizer "adamw" \
+      --report_to "wandb" \
+      --mixed_precision "bf16" \
+      --cfg_dropout_probability 0.1 \
+      --cfg_text_dropout_probability 0.1 \
+      --num_workers 8 \
+      --repa_loss_weight 0.5 \
+      --probing_method "average_pool" \
+      --resume_from_checkpoint "latest"
+```
+
 
 ## 📬 Contact
 **Lead Authors:**
