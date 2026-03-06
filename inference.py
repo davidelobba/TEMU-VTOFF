@@ -118,6 +118,7 @@ def main(args):
 
     image_encoder_large = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14").to(device=device, dtype=weight_dtype)
     image_encoder_bigG = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k").to(device=device, dtype=weight_dtype)
+    
 
     pipeline = StableDiffusion3TryOffPipelineMasked(
         scheduler=noise_scheduler,
@@ -142,6 +143,7 @@ def main(args):
 
     image = Image.open(image_path)
     image = image.resize((args.width, args.height))
+    image = transforms.ToTensor()(image).unsqueeze(0)
 
     caption = open(os.path.join(image_directory, f"{image_name}_caption.txt"), "r").read()
 
@@ -208,19 +210,19 @@ if __name__ == "__main__":
         "--width",
         type=int,
         default=768,
-        required=True,
+        required=False,
     )
     parser.add_argument(
         "--height",
         type=int,
         default=1024,
-        required=True,
+        required=False,
     )
     parser.add_argument(
         "--output_dir",
         type=str,
         default="outputs",
-        required=True,
+        required=False,
     )
     parser.add_argument(
         "--mixed_precision",
@@ -232,19 +234,19 @@ if __name__ == "__main__":
         "--example_image",
         type=str,
         default="examples/example1.jpg",
-        required=True,
+        required=False,
     )
     parser.add_argument(
         "--guidance_scale",
         type=float,
         default=2.0,
-        required=True,
+        required=False,
     )
     parser.add_argument(
         "--num_inference_steps",
         type=int,
         default=28,
-        required=True,
+        required=False,
     )
     args = parser.parse_args()
     main(args)

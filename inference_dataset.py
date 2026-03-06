@@ -54,7 +54,6 @@ def main(args):
     image_encoder_large = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14").to(device=device, dtype=weight_dtype)
     image_encoder_bigG = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k").to(device=device, dtype=weight_dtype)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pipeline = StableDiffusion3TryOffPipelineMasked(
         scheduler=noise_scheduler,
         vae=vae,
@@ -249,13 +248,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--width",
         type=int,
-        required=True,
+        required=False,
         default=768,
     )
     parser.add_argument(
         "--height",
         type=int,
-        required=True,
+        required=False,
         default=1024,
     )
     parser.add_argument(
@@ -282,13 +281,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--guidance_scale",
         type=float,
-        required=True,
+        required=False,
         default=2.0,
     )
     parser.add_argument(
         "--num_inference_steps",
         type=int,
-        required=True,
+        required=False,
         default=28,
     )
     args = parser.parse_args()
