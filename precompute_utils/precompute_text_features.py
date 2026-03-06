@@ -113,7 +113,6 @@ def parse_args(input_args=None):
         default=0,
         help="Number of workers for the dataloader.",
     )
-    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     parser.add_argument("--text_encoders", type=str, nargs='+', default="CLIP")
 
     if input_args is not None:
@@ -121,27 +120,23 @@ def parse_args(input_args=None):
     else:
         args = parser.parse_args()
 
-    env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    if env_local_rank != -1 and env_local_rank != args.local_rank:
-        args.local_rank = env_local_rank
-
     return args
 
-def load_text_encoders(class_one, class_two, class_three, cache_dir=None):
+def load_text_encoders(class_one, class_two, class_three, pretrained_model_name_or_path, revision, variant):
     text_encoder_one, text_encoder_two, text_encoder_three = None, None, None
     if class_one is not None and class_two is not None:
         text_encoder_one = class_one.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant,
+            pretrained_model_name_or_path, subfolder="text_encoder", revision=revision, variant=variant,
         )
         text_encoder_two = class_two.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder_2", revision=args.revision, variant=args.variant,
+            pretrained_model_name_or_path, subfolder="text_encoder_2", revision=revision, variant=variant,
         )
         text_encoder_one.requires_grad_(False)
         text_encoder_two.requires_grad_(False)
         
     if class_three is not None:
         text_encoder_three = class_three.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder_3", revision=args.revision, variant=args.variant,
+            pretrained_model_name_or_path, subfolder="text_encoder_3", revision=revision, variant=variant,
         )
         text_encoder_three.requires_grad_(False)
     return text_encoder_one, text_encoder_two, text_encoder_three
@@ -371,20 +366,17 @@ def main(args):
         args.pretrained_model_name_or_path,
         subfolder="tokenizer",
         revision=args.revision,
-        cache_dir = args.cache_dir
     )
     tokenizer_two = CLIPTokenizer.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="tokenizer_2",
         revision=args.revision,
-        cache_dir = args.cache_dir
     )
     tokenizer_three = T5TokenizerFast.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="tokenizer_3",
         revision=args.revision,
         low_cpu_mem_usage=True,
-        cache_dir = args.cache_dir
     )
 
     text_encoder_cls_one, text_encoder_cls_two = None, None
@@ -403,6 +395,7 @@ def main(args):
     
     text_encoder_one, text_encoder_two, text_encoder_three = load_text_encoders(
         text_encoder_cls_one, text_encoder_cls_two, text_encoder_cls_three,
+        args.pretrained_model_name_or_path, args.revision, args.variant,
     )
     
     if "CLIP" in args.text_encoders:
@@ -454,7 +447,6 @@ def main(args):
     else:
         raise NotImplementedError(f"Dataset {args.dataset_name} not implemented")
         
-    batch = test_dataset[0]
     dataroot = test_dataset.dataroot
     test_dataloader = torch.utils.data.DataLoader(
         test_dataset,

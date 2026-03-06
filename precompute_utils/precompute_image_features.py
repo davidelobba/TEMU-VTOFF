@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 import torch
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from dataset.dresscode import DressCodeDataset
 from dataset.vitonhd import VitonHDDataset
 from accelerate import Accelerator
@@ -21,13 +23,9 @@ def parse_args():
     parser.add_argument("--phase", type=str, required=True, help="Phase of the dataset (e.g. train, test).")
     parser.add_argument("--category", type=str, required=True, choices=["all", "dresses", "upper_body", "lower_body"], help="Category of the dataset.")
     parser.add_argument("--dataset", type=str, required=True, choices=["dresscode", "vitonhd"], help="Dataset to use.")
-    parser.add_argument("--mask_type", type=str, required=True, default="bounding_box", help="Type of mask to use.")
-
+    parser.add_argument("--mask_type", type=str, default="bounding_box", help="Type of mask to use.")
 
     args = parser.parse_args()
-    env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    if env_local_rank != -1 and env_local_rank != args.local_rank:
-        args.local_rank = env_local_rank
 
     return args
 
@@ -40,7 +38,6 @@ def get_clip_image_embeds(image_encoder_large, image_encoder_bigG, image):
 def main(args):
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
-        cpu=args.force_cpu
     )
     device = accelerator.device
     weight_dtype = torch.float32
@@ -51,8 +48,8 @@ def main(args):
 
     vit_processing = CLIPImageProcessor()
 
-    image_encoder_large = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14", torch_dtype=weight_dtype)
-    image_encoder_bigG = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k", torch_dtype=weight_dtype)
+    image_encoder_large = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14", torch_dtype=weight_dtype).to(device)
+    image_encoder_bigG = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k", torch_dtype=weight_dtype).to(device)
     
     outputlist = ['image', 'cloth', 'category', 'im_name', 'c_name']
     if args.category == "all":
@@ -87,7 +84,6 @@ def main(args):
     else:
         raise NotImplementedError(f"Dataset {args.dataset} not implemented")
     
-    batch = test_dataset[0]
     test_dataloader = torch.utils.data.DataLoader(
         test_dataset,
         shuffle=False,
@@ -103,14 +99,11 @@ def main(args):
     for idx, batch in enumerate(tqdm(test_dataloader)):
         vton_img = batch.get("image").to('cpu')
         vton_img = (vton_img+1) /2
-        category = batch.get("category")
-
-        bs = len(category)
         
         vton_img = vton_img.to(device=device)
         vton_img_vit = vit_processing(images=vton_img, return_tensors="pt").data['pixel_values']
         vton_img_vit = vton_img_vit.to(device=device)
-        vton_img_embeds = get_clip_image_embeds(image_encoder_large, image_encoder_bigG, vton_img_vit, device)
+        vton_img_embeds = get_clip_image_embeds(image_encoder_large, image_encoder_bigG, vton_img_vit)
         
         for i in range(vton_img.shape[0]):
             vton_name = batch["im_name"][i]

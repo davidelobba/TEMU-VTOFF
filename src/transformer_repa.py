@@ -74,7 +74,6 @@ class HiddenStateDownsamplerCNN(nn.Module):
         output = self.final_norm(output)
         return output
 
-
 class SD3Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     """
     The Transformer model introduced in Stable Diffusion 3.
@@ -115,7 +114,7 @@ class SD3Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         projector_dim: int = 2048,
         z_dims: List[int] = [768],
         encoder_depth: int = 8,
-        probing_method: Literal["average_pool", "conv"] = "conv",
+        probing_method: Literal["average_pool", "conv"] = "average_pool",
     ):
         super().__init__()
         default_out_channels = in_channels
@@ -188,6 +187,7 @@ class SD3Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.LayerNorm) or isinstance(m, nn.BatchNorm2d):
+                # m = m.float()
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
             elif isinstance(m, nn.Conv2d):
@@ -434,7 +434,7 @@ class SD3Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                     hidden_states=hidden_states, encoder_hidden_states=encoder_hidden_states, temb=temb, ref_key=ref_key[index_block], ref_value=ref_value[index_block]
                 )
                 if (index_block + 1) == self.encoder_depth:
-                    N, T, D = hidden_states.shape # N = batch size, T = sequence length, D = hidden dimension
+                    N, T, D = hidden_states.shape
 
                     zs = []
                     if self.probing_method == "average_pool":

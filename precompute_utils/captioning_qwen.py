@@ -63,79 +63,54 @@ def qwen_captioning(args):
                                 "upper_body": ["Cloth Type", "Waist", "Fit", "Hem", "Neckline", "Sleeve Length", "Cloth Length"], 
                                 "lower_body": ["Cloth Type", "Waist", "Fit", "Cloth Length"]}
         
-    outputlist=["c_name", "category"]
-    category=["upper_body", "lower_body", "dresses"]
+    dataset_kwargs = dict(
+        dataroot_path=args.dataset_root,
+        order="paired",
+        radius=5,
+        outputlist=["c_name", "category"],
+        sketch_threshold_range=(20, 20),
+        size=(args.height, args.width),
+    )
     if args.dataset_name == "dresscode":
-        train_dataset = DressCodeDataset(
-            dataroot_path=args.dataset_root,
-            phase="train",
-            order="paired",
-            radius=5,
-            outputlist=outputlist,
-            sketch_threshold_range=(20, 20),
-            category=category,
-            size=(args.height, args.width),
-            )
-        test_dataset = DressCodeDataset(
-            dataroot_path=args.dataset_root,
-            phase="test",
-            order="paired",
-            radius=5,
-            outputlist=outputlist,
-            sketch_threshold_range=(20, 20),
-            category=category,
-            size=(args.height, args.width),
-            )
-    elif args.dataset_name == "vitonhd":
-        train_dataset = VitonHDDataset(
-            dataroot_path=args.dataset_root,
-            phase="train",
-            order="paired",
-            radius=5,
-            outputlist=outputlist,
-            sketch_threshold_range=(20, 20),
-            size=(args.height, args.width),
-        )
-        test_dataset = VitonHDDataset(
-            dataroot_path=args.dataset_root,
-            phase="test",
-            order="paired",
-            radius=5,
-            outputlist=outputlist,
-            sketch_threshold_range=(20, 20),
-            size=(args.height, args.width),
-        )
-        
+        DatasetClass = DressCodeDataset
+        dataset_kwargs["category"] = ["upper_body", "lower_body", "dresses"]
+    else:
+        DatasetClass = VitonHDDataset
+
+    train_dataset = DatasetClass(phase="train", **dataset_kwargs)
+    test_dataset = DatasetClass(phase="test", **dataset_kwargs)
+
     dataroot_names = train_dataset.dataroot_names + test_dataset.dataroot_names
-    phases = ["train" for _ in range(len(train_dataset))] + ["test" for _ in range(len(test_dataset))]
     c_names = train_dataset.c_names + test_dataset.c_names
+    phases = ["train"] * len(train_dataset) + ["test"] * len(test_dataset)
+
+    category_label_map = {"upper_body": "upper body", "lower_body": "lower body", "dresses": "dress"}
+
+    if args.dataset_name == "vitonhd":
+        categories = ["upper_body"] * len(dataroot_names)
+    else:
+        categories = [dataroot.split("/")[-1] for dataroot in dataroot_names]
     temperatures = args.temperatures
     vlm_captions_dicts = [{} for _ in range(len(temperatures))]
-    
+
     for i, t in enumerate(temperatures):
-        t = str(temperatures[i]).replace(".","_")
-        if os.path.exists(os.path.join(args.dataset_root, args.filename.replace(".json", f"_{t}.json"))):
-            with open(os.path.join(args.dataset_root, args.filename.replace(".json", f"_{t}.json"))) as f:
+        t_str = str(t).replace(".", "_")
+        path = os.path.join(args.dataset_root, args.filename.replace(".json", f"_{t_str}.json"))
+        if os.path.exists(path):
+            with open(path) as f:
                 vlm_captions_dicts[i] = json.load(f)
-    
-    idx = 0
-    for dataroot, phase, c_name in tqdm(zip(dataroot_names, phases, c_names)):
-        idx+=1
+
+    for idx, (dataroot, phase, c_name, category) in enumerate(tqdm(zip(dataroot_names, phases, c_names, categories)), 1):
         item_id = c_name.split("_")[0]
-        if item_id in vlm_captions_dicts[0].keys():
+        if item_id in vlm_captions_dicts[0]:
             continue
-        
-        if args.dataset_name == "vitonhd":
-            category="upper_body"
-            img_path = os.path.join(
-                dataroot, phase, 'cloth', c_name)
-    
-        elif args.dataset_name == "dresscode":
-            category = dataroot.split("/")[-1]
-            img_path = os.path.join(
-            dataroot, 'cleaned_inshop_imgs', c_name.replace(".jpg", "_cleaned.jpg"))
-            if not os.path.exists(img_path): img_path = os.path.join(dataroot, 'images', c_name)
-                
+
+        category_to_predict = category_label_map[category]
+        if args.dataset_name == "dresscode":
+            img_path = os.path.join(dataroot, 'images', item_id + "_0.jpg")
+        else:
+            img_path = os.path.join(dataroot, phase, 'image', c_name)
+
         messages = [
             {   "role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
             {   "role": "user",
@@ -146,11 +121,10 @@ def qwen_captioning(args):
                     },
                     {"type": "text", "text": 
                     "Use only visual attributes that are present in the image. "
-                    f"Predict values of the following attributes: {visual_attributes[category]}. "
+                    f"Predict values of the following attributes: {visual_attributes[category]}. Do it only for the {category_to_predict} garment. "
                     "It's forbidden to generate the following visual attributes: colors, background and textures/patterns. "
                     "It's forbidden to generate unspecified predictions. It's forbidden to generate newlines characters. "
                     f"Generate in this way: a <cloth type> with <attributes description>"
-                    
                     },
                 ],
             }
@@ -182,14 +156,16 @@ def qwen_captioning(args):
             vlm_captions_dicts[i][item_id] = output_text
         
         if idx % 1000 == 0:
-            for i, vlm_captions_dict in enumerate(vlm_captions_dicts):
-                t = str(temperatures[i]).replace(".","_")
-                with open(os.path.join(args.dataset_root, args.filename.replace(".json", f"_{t}.json")), "w") as f:
-                    json.dump(vlm_captions_dict, f)
-    
+            save_captions(args, temperatures, vlm_captions_dicts)
+
+    save_captions(args, temperatures, vlm_captions_dicts)
+
+
+def save_captions(args, temperatures, vlm_captions_dicts):
     for i, vlm_captions_dict in enumerate(vlm_captions_dicts):
-        t = str(temperatures[i]).replace(".","_")
-        with open(os.path.join(args.dataset_root, args.filename.replace(".json", f"_{t}.json")), "w") as f:
+        t_str = str(temperatures[i]).replace(".", "_")
+        path = os.path.join(args.dataset_root, args.filename.replace(".json", f"_{t_str}.json"))
+        with open(path, "w") as f:
             json.dump(vlm_captions_dict, f)
 
 if __name__ == "__main__":
