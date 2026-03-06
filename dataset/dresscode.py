@@ -84,26 +84,30 @@ class DressCodeDataset(data.Dataset):
 
         assert all(x in possible_outputs for x in outputlist)
 
-        # Load Captions
-        with open(os.path.join(self.dataroot, caption_file)) as f:
-            self.captions_dict = json.load(f)
-        self.captions_dict = {k: v for k, v in self.captions_dict.items() if len(v) >= 3}
-        if coarse_caption_file is not None:
-            with open(os.path.join(self.dataroot, coarse_caption_file)) as f:
-                coarse_captions_dict = json.load(f)
-                self.captions_dict.update(coarse_captions_dict)
-                
-        if coarse_caption_file == 'coarse_captions.json':
-            self.caption_type = 'text_embeddings'
-        elif coarse_caption_file == 'all_captions_structural.json':
-            self.caption_type = 'struct_text_embeddings'
-        elif 'demo_qwen' in coarse_caption_file:
-            self.caption_type = 'demo_qwen_text_embeddings'
-            self.captions_dict = coarse_captions_dict
-        elif 'qwen' in coarse_caption_file:
-            self.caption_type = 'qwen_text_embeddings'
-        else: raise NotImplementedError("not supported caption file")
-        del coarse_captions_dict
+        needs_captions = any(x in outputlist for x in ("captions", "clip_pooled", "clip_embeds", "t5_embeds"))
+        self.captions_dict = {}
+        self.caption_type = None
+        if needs_captions:
+            with open(os.path.join(self.dataroot, caption_file)) as f:
+                self.captions_dict = json.load(f)
+            self.captions_dict = {k: v for k, v in self.captions_dict.items() if len(v) >= 3}
+            if coarse_caption_file is not None:
+                with open(os.path.join(self.dataroot, coarse_caption_file)) as f:
+                    coarse_captions_dict = json.load(f)
+                    self.captions_dict.update(coarse_captions_dict)
+
+            if coarse_caption_file == 'coarse_captions.json':
+                self.caption_type = 'text_embeddings'
+            elif coarse_caption_file == 'all_captions_structural.json':
+                self.caption_type = 'struct_text_embeddings'
+            elif 'demo_qwen' in coarse_caption_file:
+                self.caption_type = 'demo_qwen_text_embeddings'
+                self.captions_dict = coarse_captions_dict
+            elif 'qwen' in coarse_caption_file:
+                self.caption_type = 'qwen_text_embeddings'
+            else:
+                raise NotImplementedError("not supported caption file")
+            del coarse_captions_dict
 
         for c in sorted(category):
             assert c in ['dresses', 'upper_body', 'lower_body']
@@ -118,7 +122,7 @@ class DressCodeDataset(data.Dataset):
             with open(filename, 'r') as f:
                 for line in f.readlines():
                     im_name, c_name = line.strip().split()
-                    if c_name.split('_')[0] not in self.captions_dict:
+                    if needs_captions and c_name.split('_')[0] not in self.captions_dict:
                         continue
                     if im_name in im_names:
                         continue
@@ -134,14 +138,16 @@ class DressCodeDataset(data.Dataset):
         self.category_names = category_names
         self.cloth_complete_names = {c_name: os.path.relpath(os.path.join(dataroot_names[idx], "cleaned_inshop_imgs", \
             c_name.replace(".jpg", "_cleaned.jpg")), self.dataroot) for idx, c_name in enumerate(c_names)}
-        if not os.path.isfile(os.path.join(dataroot, "complete_dict.json")):
-            self.complete_dict = {self.cloth_complete_names[c_name]: list(dict.fromkeys(self.captions_dict[c_name.split('_')[0]])) \
-                for c_name in sorted(c_names)}
-            with open(os.path.join(dataroot, f"complete_dict_{phase}.json"), "w") as f:
-                json.dump(self.complete_dict, f, indent=2)
-        else:
-            with open(os.path.join(dataroot, f"complete_dict_{phase}.json")) as f:
-                self.complete_dict = json.load(f)
+        self.complete_dict = {}
+        if needs_captions:
+            if not os.path.isfile(os.path.join(dataroot, "complete_dict.json")):
+                self.complete_dict = {self.cloth_complete_names[c_name]: list(dict.fromkeys(self.captions_dict[c_name.split('_')[0]])) \
+                    for c_name in sorted(c_names)}
+                with open(os.path.join(dataroot, f"complete_dict_{phase}.json"), "w") as f:
+                    json.dump(self.complete_dict, f, indent=2)
+            else:
+                with open(os.path.join(dataroot, f"complete_dict_{phase}.json")) as f:
+                    self.complete_dict = json.load(f)
 
     def __getitem__(self, index: int) -> dict:
         """For each index return the corresponding element in the dataset
@@ -189,41 +195,24 @@ class DressCodeDataset(data.Dataset):
             
         if "cloth_embeddings" in self.outputlist:
             feat_path = os.path.join(str(Path(dataroot).parent), 'cloth_embeddings', 'CLIP_VIT_L_VIT_G_concat', category, f"{c_name.split('.')[0]}.pt")
-            local_file = f'/tmp/dresscode_cloth_{os.getpid()}_{item_id}.pt'
-            shutil.copy(str(feat_path), local_file)
-            cloth_embeddings = torch.load(local_file,
-                                          map_location="cpu")
-            os.remove(local_file)
+            cloth_embeddings = torch.load(feat_path, map_location="cpu")
 
         if "vton_image_embeddings" in self.outputlist:
             feat_path = os.path.join(str(Path(dataroot).parent), 'vton_embeddings', 'CLIP_VIT_L_VIT_G_concat', category, f"{im_name.split('.')[0]}.pt")
-            local_file = f'/tmp/dresscode_vton_{os.getpid()}_{item_id}.pt'
-            shutil.copy(str(feat_path), local_file)
-            vton_image_embeddings = torch.load(local_file,
-                                               map_location="cpu")
-            os.remove(local_file)
+            vton_image_embeddings = torch.load(feat_path, map_location="cpu")
         
         
         if "clip_pooled" in self.outputlist:
             feat_path = Path(dataroot).parent / self.caption_type / "CLIP_VIT_L_VIT_G_concat_pooled" / category / f"{c_name.split('.')[0]}.pt"
-            local_file = f'/tmp/dresscode_pooled_{os.getpid()}_{item_id}.pt'
-            shutil.copy(str(feat_path), local_file)
-            clip_pooled = torch.load(str(local_file), map_location="cpu")
-            os.remove(local_file)
+            clip_pooled = torch.load(feat_path, map_location="cpu")
         
         if "clip_embeds" in self.outputlist:
             feat_path = Path(dataroot).parent / self.caption_type / "CLIP_VIT_L_VIT_G_concat" / category / f"{c_name.split('.')[0]}.pt"
-            local_file = f'/tmp/dresscode_clip_embeds_{os.getpid()}_{item_id}.pt'
-            shutil.copy(str(feat_path), local_file)
-            clip_embeds = torch.load(str(local_file), map_location="cpu")
-            os.remove(local_file)
+            clip_embeds = torch.load(feat_path, map_location="cpu")
         
         if "t5_embeds" in self.outputlist:
             feat_path = Path(dataroot).parent / self.caption_type / "T5_XXL" / category / f"{c_name.split('.')[0]}.pt"
-            local_file = f'/tmp/dresscode_t5_{os.getpid()}_{item_id}.pt'
-            shutil.copy(str(feat_path), local_file)
-            t5_embeds = torch.load(str(local_file), map_location="cpu")
-            os.remove(local_file)
+            t5_embeds = torch.load(feat_path, map_location="cpu")
         
         if "dwpose" in self.outputlist:
             dwpose = Image.open(os.path.join(dataroot, 'dwpose', f"{im_name.split('_')[0]}_2.png"))

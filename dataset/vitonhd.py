@@ -90,17 +90,21 @@ class VitonHDDataset(data.Dataset):
 
         assert all(x in possible_outputs for x in outputlist)
 
-        # Load Captions
-        with open(os.path.join(self.dataroot, caption_file)) as f:
-            self.captions_dict = json.load(f)
-            
-        if caption_file == 'coarse_captions.json':
-            self.caption_type = 'text_embeddings'
-        elif caption_file == 'all_struct_captions.json':
-            self.caption_type = 'struct_text_embeddings'
-        elif 'qwen' in caption_file:
-            self.caption_type = 'qwen_text_embeddings'
-        else: raise NotImplementedError("not supported caption file")
+        needs_captions = any(x in outputlist for x in ("captions", "clip_pooled", "clip_embeds", "t5_embeds"))
+        self.captions_dict = {}
+        self.caption_type = None
+        if needs_captions:
+            with open(os.path.join(self.dataroot, caption_file)) as f:
+                self.captions_dict = json.load(f)
+
+            if caption_file == 'coarse_captions.json':
+                self.caption_type = 'text_embeddings'
+            elif caption_file == 'all_struct_captions.json':
+                self.caption_type = 'struct_text_embeddings'
+            elif 'qwen' in caption_file:
+                self.caption_type = 'qwen_text_embeddings'
+            else:
+                raise NotImplementedError("not supported caption file")
 
         dataroot = self.dataroot
         if phase == 'train':
@@ -181,40 +185,23 @@ class VitonHDDataset(data.Dataset):
             
         if "cloth_embeddings" in self.outputlist:
             feat_path = os.path.join(dataroot, 'cloth_embeddings', 'CLIP_VIT_L_VIT_G_concat', self.phase, f"{c_name.split('.')[0]}.pt")
-            local_file = f'/tmp/vitonhd_cloth_{os.getpid()}_{item_id}.pt'
-            shutil.copy(str(feat_path), local_file)
-            cloth_embeddings = torch.load(local_file,
-                                          map_location="cpu")
-            os.remove(local_file)
+            cloth_embeddings = torch.load(feat_path, map_location="cpu")
         
         if "vton_image_embeddings" in self.outputlist:
             feat_path = os.path.join(dataroot, 'vton_embeddings', 'CLIP_VIT_L_VIT_G_concat', self.phase, f"{im_name.split('.')[0]}.pt")
-            local_file = f'/tmp/vitonhd_vton_{os.getpid()}_{item_id}.pt'
-            shutil.copy(str(feat_path), local_file)
-            vton_image_embeddings = torch.load(feat_path,
-                                               map_location="cpu")
-            os.remove(local_file)
+            vton_image_embeddings = torch.load(feat_path, map_location="cpu")
         
         if "clip_pooled" in self.outputlist:
             feat_path = Path(dataroot) / self.caption_type / "CLIP_VIT_L_VIT_G_concat_pooled" / self.phase / f"{c_name.split('.')[0]}.pt"
-            local_file = f'/tmp/vitonhd_pooled_{os.getpid()}_{item_id}.pt'
-            shutil.copy(str(feat_path), local_file)
-            clip_pooled = torch.load(str(local_file), map_location="cpu")
-            os.remove(local_file)
+            clip_pooled = torch.load(feat_path, map_location="cpu")
         
         if "clip_embeds" in self.outputlist:
             feat_path = Path(dataroot) / self.caption_type / "CLIP_VIT_L_VIT_G_concat" / self.phase / f"{c_name.split('.')[0]}.pt"
-            local_file = f'/tmp/vitonhd_clip_embeds_{os.getpid()}_{item_id}.pt'
-            shutil.copy(str(feat_path), local_file)
-            clip_embeds = torch.load(str(local_file), map_location="cpu")
-            os.remove(local_file)
+            clip_embeds = torch.load(feat_path, map_location="cpu")
         
         if "t5_embeds" in self.outputlist:
             feat_path = Path(dataroot) / self.caption_type / "T5_XXL" / self.phase / f"{c_name.split('.')[0]}.pt"
-            local_file = f'/tmp/vitonhd_t5_{os.getpid()}_{item_id}.pt'
-            shutil.copy(str(feat_path), local_file)
-            t5_embeds = torch.load(str(local_file), map_location="cpu")
-            os.remove(local_file)
+            t5_embeds = torch.load(feat_path, map_location="cpu")
             
         if "dwpose" in self.outputlist:
             dwpose = Image.open(os.path.join(dataroot, self.phase, 'dwpose', f"{im_name.split('.')[0]}_rendered.png"))
